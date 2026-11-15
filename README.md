@@ -15,7 +15,8 @@ Add the `bin` subdirectory of your first Julia depot to `PATH`. With the default
 ## Plot from the terminal
 
 ```text
-jdplot MODEL_jutul_output --series FOPR -o oil-rate.png
+jdplot MODEL.SMSPEC --rows 1 --columns 2 --plots FPR --plots "FOPR,FWPR"
+jdplot MODEL_jutul_output --plots FOPR -o oil-rate.png
 jdplot MODEL.SMSPEC --plot wells --entity PROD --series WBHP -o producer.png
 jdplot MODEL.UNRST --field PRESSURE --step 3 -o pressure.png
 jdplot MODEL.EGRID
@@ -27,24 +28,26 @@ GLMakie is the default backend. It opens an interactive window and keeps the com
 
 By default, `.SMSPEC`, `.UNSMRY`, and `.Snnnn` open the summary. `.EGRID`, `.INIT`, `.UNRST`, `.RSSPEC`, `.Xnnnn`, `.DATA`, `.GRDECL`, `.AFI`, `.jl`, and native `jutul_N.jld2` reports open the reservoir. A case prefix, directory, or JLD2 bundle opens the summary when available and otherwise opens the reservoir. Use `--plot` to choose the view explicitly.
 
-`--series` selects a summary keyword. `--entity` can select a field, well, group, or other summary entity. `--field` and `--step` select a reservoir property and its one-based position in the saved reports. CairoMakie accepts `--row` for matrix-valued properties. Add `--static` to show grid properties and well locations without displaying dynamic cell results.
+Summary figures use [`JutulDarcy.plot_summary`](https://sintefmath.github.io/JutulDarcy.jl/stable/man/basics/plotting). Use `--rows` and `--columns` (or `--cols`) to set the initial layout. Repeat `--plots` once per panel. A comma joins curves within a panel, as in `"FOPR,FWPR"`. Prefix well and group keywords with their source name, as in `"PROD:WBHP"` or `"INJECTORS:GWIR"`. The interactive summary includes JutulDarcy's source, response, and unit selectors. On the desktop, `--entity` and `--series` still select one summary panel or a curve in the dedicated well view.
+
+`--field` and `--step` select a reservoir property and its one-based position in the saved reports. CairoMakie accepts `--row` for matrix-valued properties. Add `--static` to show grid properties and well locations without displaying dynamic cell results.
 
 ## Explore in a browser
 
 ```text
 jdplot-web MODEL_jutul_output
-jdplot-web MODEL_jutul_output --plot combined
+jdplot-web MODEL_jutul_output --plot combined --rows 2 --cols 1 --plots FPR --plots "PROD:WBHP"
 jdplot-web MODEL.EGRID --static --port 9000
 jdplot-web native-results --case case.jl
 ```
 
 Open the URL printed by `jdplot-web`. The Bonito server listens on `127.0.0.1:9384` by default. A case prefix, directory, or JLD2 bundle serves all available views. An explicit file selects the view by extension, just as it does for `jdplot`. Use `--plot` to choose a view or `--host` and `--port` to change the listen address. The reservoir explorer can switch between static and dynamic properties, step through saved reports, and rotate and zoom the grid. Interactive views show dynamic cell properties available across all reports. To plot an array saved in only some reports, use Cairo with `--field` and `--step`. Each browser session has its own controls. Press Ctrl+C in the terminal to stop the server.
 
-`--plot combined` puts the summary controls and reservoir explorer side by side and stacks them on narrower screens. The summary selector also includes well curves. Either panel stays interactive while you use the other.
+`--plot combined` puts the summary and reservoir explorer side by side and stacks them on narrower screens. The same summary layout and panel options apply to the web viewer.
 
 ## Input formats
 
-- **Eclipse.** Pass a case prefix, a supported case file, or a directory containing one case, including the default output directory from `jdrun`. Summary and well curves use `.SMSPEC` with `.UNSMRY` or split `.Snnnn` files and display the units declared by the summary. Reservoir plotting uses `.EGRID`, or geometry from `.DATA` or `.GRDECL`, and adds cell arrays from `.INIT` and `.UNRST` or split `.Xnnnn` reports when available. Selecting a specific `.Xnnnn` plots that report. The binary reader loads the main grid.
+- **Eclipse.** Pass a case prefix, a supported case file, or a directory containing one case, including the default output directory from `jdrun`. Summary and well curves use `.SMSPEC` with `.UNSMRY` or split `.Snnnn` files. Summary figures start in metric units by default, and the dedicated well view uses the units declared by the file. Reservoir plotting uses `.EGRID`, or geometry from `.DATA` or `.GRDECL`, and adds cell arrays from `.INIT` and `.UNRST` or split `.Xnnnn` reports when available. Selecting a specific `.Xnnnn` plots that report. The binary reader loads the main grid.
 - **Jutul.** Pass the `output_path` directory from `simulate_reservoir`, or any of its `jutul_N.jld2` files, together with `--case`. The case supplies the mesh, wells, and simulation controls. It may be a Julia script defining `case::JutulCase`, a `.DATA` or `.AFI` input, or a JLD2 file storing `case`. Rebuilding curves from a report directory requires consecutive saved reports with `report_level >= 0`. You can also pass a `.jl`, `.AFI`, or JLD2 case by itself for a static reservoir view.
 
 To store the native case and results together, save the raw `SimResult` from a `ReservoirSimResult` under the `result` key.

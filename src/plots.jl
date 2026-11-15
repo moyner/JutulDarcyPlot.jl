@@ -1,3 +1,54 @@
+function summary_sources(summary)
+    sources = Tuple{String, String, AbstractDict}[]
+    (isnothing(summary) || isempty(summary["TIME"].seconds)) && return sources
+    values = summary["VALUES"]
+    field = get(values, "FIELD", Dict())
+    isempty(field) || push!(sources, ("FIELD", "Field", field))
+    for (scope, label) in (("GROUP", "Group"), ("WELLS", "Well"))
+        for (name, data) in sort!(collect(get(values, scope, Dict())); by = first)
+            isempty(data) || push!(sources, (name, "$label $name", data))
+        end
+    end
+    return sources
+end
+
+function initial_summary_plot(sources; entity, series)
+    if !isnothing(entity)
+        sources = filter(s -> lowercase(entity) in (lowercase(s[1]), lowercase(s[2])), sources)
+        isempty(sources) && throw(ArgumentError("Unknown summary entity $entity."))
+        length(sources) == 1 || throw(ArgumentError("Use the full label to disambiguate $entity."))
+    end
+    if !isnothing(series)
+        key = uppercase(series)
+        for (name, _, data) in sources
+            haskey(data, key) && return "$name:$key"
+        end
+        throw(ArgumentError("Series $series is unavailable$(isnothing(entity) ? "" : " for $entity")."))
+    end
+    name, _, data = first(sources)
+    for key in ("FPR", "FOPR", "FWPR", "WBHP")
+        haskey(data, key) && return "$name:$key"
+    end
+    return "$name:$(minimum(keys(data)))"
+end
+
+function summary_layout(sources, args)
+    isempty(sources) && throw(ArgumentError("No field, group, or well summary curves are available."))
+    plots = args[:plots]
+    if isempty(plots)
+        plots = [initial_summary_plot(sources; entity = get(args, :entity, nothing), series = get(args, :series, nothing))]
+    end
+    rows = args[:rows]
+    cols = something(args[:columns], isnothing(rows) ? 1 : cld(length(plots), rows))
+    rows = something(rows, cld(length(plots), cols))
+    cld(length(plots), rows) <= cols || throw(ArgumentError("$(length(plots)) summary panels do not fit in $rows rows and $cols columns."))
+    return (; plots, rows, cols)
+end
+
+function summary_figure(summary, name, layout; interactive)
+    return JutulDarcy.plot_summary(summary; names = [name], selectors = interactive, layout...)
+end
+
 struct Curve
     keyword::String
     description::String
@@ -11,7 +62,7 @@ struct CurveEntity
     curves::Vector{Curve}
 end
 
-function curve_catalog(summary, view)
+function well_catalog(summary)
     isnothing(summary) && return CurveEntity[]
     time = summary["TIME"].seconds
     isempty(time) && return CurveEntity[]
@@ -21,7 +72,7 @@ function curve_catalog(summary, view)
     lookup = JutulDarcy.summary_key_lookup()
     entities = CurveEntity[]
 
-    function add_entity(name, label, data; identity = nothing)
+    for (name, data) in sort!(collect(get(values, "WELLS", Dict())); by = first)
         curves = Curve[]
         for key in sort!(collect(keys(data)))
             samples = data[key]
@@ -30,7 +81,7 @@ function curve_catalog(summary, view)
             description = isnothing(info) ? key : "$key · $(uppercasefirst(info.legend))"
             unit = if !isnothing(units)
                 entry = get(units, key, "")
-                entry isa AbstractDict ? get(entry, identity, "") : entry
+                entry isa AbstractDict ? get(entry, name, "") : entry
             elseif !isnothing(info) && system == "si"
                 _, label = JutulDarcy.unit_system_unit_conversion(system, "", info.unit_type)
                 info.is_rate && !isempty(label) ? "$label/s" : label
@@ -39,39 +90,13 @@ function curve_catalog(summary, view)
             end
             push!(curves, Curve(key, description, strip(unit), samples))
         end
-        isempty(curves) || push!(entities, CurveEntity(name, label, curves))
-    end
-
-    if view == :wells
-        for (name, data) in sort!(collect(get(values, "WELLS", Dict())); by = first)
-            add_entity(name, name, data; identity = name)
-        end
-    else
-        add_entity("FIELD", "Field", get(values, "FIELD", Dict()))
-        # The structured Eclipse format can also contain region, block, and
-        # completion vectors. Group these by their declared summary identity.
-        for (scope, prefix) in (("GROUP", "Group"), ("REGIONS", "Region"), ("BLOCKS", "Block"),
-                ("COMPLETIONS", "Completion"), ("SEGMENTS", "Segment"), ("AQUIFERS", "Aquifer"), ("MISC", "Other"))
-            unqualified = Dict{String, Any}()
-            for (name, data) in sort!(collect(get(values, scope, Dict())); by = first)
-                if data isa AbstractDict
-                    add_entity(name, "$prefix $name", data; identity = name)
-                else
-                    unqualified[name] = data
-                end
-            end
-            add_entity(prefix, prefix, unqualified)
-        end
-        # This also keeps well-only SMSPEC files usable in the summary view.
-        for (name, data) in sort!(collect(get(values, "WELLS", Dict())); by = first)
-            add_entity(name, "Well $name", data; identity = name)
-        end
+        isempty(curves) || push!(entities, CurveEntity(name, name, curves))
     end
     return entities
 end
 
-function initial_curve(entities; entity, series, view)
-    isempty(entities) && throw(ArgumentError("No $(view == :wells ? "well curves" : "summary curves") are available."))
+function initial_curve(entities; entity, series)
+    isempty(entities) && throw(ArgumentError("No well curves are available."))
     entity_options = if isnothing(entity)
         eachindex(entities)
     else
@@ -88,8 +113,7 @@ function initial_curve(entities; entity, series, view)
         throw(ArgumentError("Series $series is unavailable$(isnothing(entity) ? "" : " for $entity")."))
     end
     i = first(entity_options)
-    preferred = view == :wells ? ("WBHP", "WOPR", "WWPR") : ("FPR", "FOPR", "FWPR", "WBHP")
-    return i, preferred_index(entities[i].curves, preferred)
+    return i, preferred_index(entities[i].curves, ("WBHP", "WOPR", "WWPR"))
 end
 
 function preferred_index(curves, preferred)
@@ -100,12 +124,12 @@ function preferred_index(curves, preferred)
     return 1
 end
 
-function curve_figure(summary, entities, name, view; interactive, entity = nothing, series = nothing, compact = false)
-    i, j = initial_curve(entities; entity, series, view)
+function well_figure(summary, entities, name; interactive, entity = nothing, series = nothing)
+    i, j = initial_curve(entities; entity, series)
     time = summary["TIME"].seconds ./ Jutul.si_unit(:day)
     start_date = summary["TIME"].start_date
     xlabel = isnothing(start_date) || ismissing(start_date) ? "Elapsed time (days)" : "Days since $(first(split(string(start_date), 'T')))"
-    fig = Makie.Figure(size = compact ? (420, 720) : (880, 480), backgroundcolor = :white)
+    fig = Makie.Figure(size = (880, 480), backgroundcolor = :white)
     selected_entity = Makie.Observable(entities[i])
     selected_curve = Makie.Observable(entities[i].curves[j])
     title = Makie.lift(selected_entity) do item
@@ -114,19 +138,14 @@ function curve_figure(summary, entities, name, view; interactive, entity = nothi
     ylabel = Makie.lift(selected_curve) do curve
         isempty(curve.unit) ? curve.description : "$(curve.description) ($(curve.unit))"
     end
-    plot_position = if compact
-        fig[interactive ? 3 : 1, 1]
-    else
-        fig[interactive ? 2 : 1, 1:2]
-    end
-    ax = Makie.Axis(plot_position; title, xlabel, ylabel, xgridcolor = :gray90, ygridcolor = :gray90)
+    ax = Makie.Axis(fig[interactive ? 2 : 1, 1:2]; title, xlabel, ylabel, xgridcolor = :gray90, ygridcolor = :gray90)
     samples = Makie.lift(c -> c.values, selected_curve)
     Makie.scatterlines!(ax, time, samples; color = :teal, linewidth = 2.5,
         markersize = length(time) <= 30 ? 7 : 0)
 
     if interactive
         entity_menu = Makie.Menu(fig[1, 1]; options = getfield.(entities, :label), default = i)
-        series_menu = Makie.Menu(compact ? fig[2, 1] : fig[1, 2];
+        series_menu = Makie.Menu(fig[1, 2];
             options = getfield.(entities[i].curves, :description), default = j)
         Makie.on(entity_menu.i_selected) do index
             index == 0 && return

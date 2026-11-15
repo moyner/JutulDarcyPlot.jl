@@ -14,15 +14,15 @@ const WEB_STYLE = """
                       margin-bottom: 20px; overflow: hidden; }
     .jdplot .plot { overflow-x: auto; }
     .jdplot.wide { max-width: 1800px; padding-inline: clamp(12px, 1.4vw, 24px); }
-    .jdplot .combined { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(960px, 2.5fr); gap: 16px; }
-    @media (max-width: 1350px) {
+    .jdplot .combined { display: grid; grid-template-columns: minmax(620px, 1fr) minmax(790px, 1.25fr); gap: 16px; }
+    @media (max-width: 1480px) {
         .jdplot .combined { grid-template-columns: minmax(0, 1fr); gap: 0; }
     }
     """
 
-function web_app(name, results, requested; bonito, backend)
-    summary = curve_catalog(results.summary, :summary)
-    wells = curve_catalog(results.summary, :wells)
+function web_app(name, results, requested, args; bonito, backend)
+    summary = summary_sources(results.summary)
+    wells = well_catalog(results.summary)
     available = Dict(:summary => !isempty(summary), :wells => !isempty(wells),
         :reservoir => !isnothing(results.reservoir))
     combined = requested == :combined
@@ -36,6 +36,9 @@ function web_app(name, results, requested; bonito, backend)
         required
     end
     isempty(views) && throw(ArgumentError("No plottable summary, well, or reservoir data available for $name."))
+    layout = if :summary in views || has_summary_options(args)
+        summary_layout(summary, args)
+    end
     DOM = bonito.DOM
     # Build each figure in its own browser session. The loaded results are shared
     # read-only, while menu, slider, and camera state are local to the session.
@@ -45,15 +48,20 @@ function web_app(name, results, requested; bonito, backend)
                 figure = reservoir_figure(results.reservoir, name; interactive = true)
                 combined ? Makie.resize!(figure, 1040, 720) : Makie.resize!(figure, 1300, 760)
                 figure
+            elseif view == :summary
+                figure = summary_figure(results.summary, name, layout; interactive = true)
+                combined && Makie.resize!(figure, 820, 720)
+                figure
             else
-                entities = view == :wells ? wells : summary
-                curve_figure(results.summary, entities, name, view; interactive = true, compact = combined)
+                well_figure(results.summary, wells, name; interactive = true)
             end
             plot = backend.WithConfig(fig; resize_to = (:parent, nothing))
             min_width = if view == :reservoir
                 combined ? 960 : 1000
+            elseif view == :summary
+                max(820, 415 * layout.cols)
             else
-                combined ? 320 : 580
+                580
             end
             frame = DOM.div(plot; style = "min-width: $(min_width)px")
             DOM.section(DOM.h2(VIEW_TITLES[view]), DOM.div(frame; class = "plot"); id = string(view))
@@ -69,9 +77,9 @@ function web_app(name, results, requested; bonito, backend)
     end
 end
 
-function serve_web(name, results, view; host, port, backend, bonito)
+function serve_web(name, results, view, args; host, port, backend, bonito)
     backend.activate!()
-    app = web_app(name, results, view; backend, bonito)
+    app = web_app(name, results, view, args; backend, bonito)
     server = bonito.Server(app, host, port)
     println("jdplot-web is serving $name at $(bonito.online_url(server, "/"))")
     flush(stdout)

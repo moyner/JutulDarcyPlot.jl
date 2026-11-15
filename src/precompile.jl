@@ -57,11 +57,11 @@ function plot_workload_data()
 end
 
 function precompile_plot_figures(render, examples; interactive)
+    args = parse_commandline(["Example"]; web = false)
     for (; data, static) in examples
-        for view in (:summary, :wells)
-            entities = curve_catalog(data.summary, view)
-            render(curve_figure(data.summary, entities, "Example", view; interactive))
-        end
+        layout = summary_layout(summary_sources(data.summary), args)
+        render(summary_figure(data.summary, "Example", layout; interactive))
+        render(well_figure(data.summary, well_catalog(data.summary), "Example"; interactive))
         render(reservoir_figure(data.reservoir, "Example"; interactive, step = 2))
         render(reservoir_figure(static.reservoir, "Example"; interactive))
     end
@@ -76,10 +76,12 @@ end
         native = mkdir(joinpath(directory, "native"))
         companion = write_native_workload(native)
         @compile_workload begin
-            for (input, web) in ((unified.egrid, false), (unified.summary.spec, false), (split.base, true))
-                args = parse_commandline([input]; web)
+            for (argv, web) in (([unified.egrid], false),
+                    ([unified.summary.spec, "--rows", "1", "--cols", "2", "--plots", "FPR", "--plots", "PROD:WBHP"], false),
+                    ([split.base], true))
+                args = parse_commandline(argv; web)
                 (; view, static) = plot_options(args; web)
-                load_results(resolve_input(input), view; web, static)
+                load_results(resolve_input(args[:input]), view; web, static)
             end
             load_results(resolve_input(first(split.restart)), :reservoir; web = false, static = false)
             load_results(resolve_input(native; companion), :auto; web = true, static = false)

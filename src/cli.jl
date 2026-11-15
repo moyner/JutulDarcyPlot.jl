@@ -15,6 +15,18 @@ function parse_commandline(argv; web)
             help = web ? "View to serve (auto, summary, wells, reservoir, combined). Combined puts the summary and reservoir side by side." :
                 "View to plot (auto, summary, wells, reservoir). Auto follows the file type."
             default = "auto"
+        "--plots", "--summary-plot"
+            help = "Initial summary panel, for example FPR, FOPR,FWPR or PROD:WBHP. Repeat for more panels."
+            arg_type = String
+            action = :append_arg
+        "--rows"
+            help = "Initial number of summary rows"
+            arg_type = Int
+            range_tester = n -> n > 0
+        "--columns", "--cols"
+            help = "Initial number of summary columns"
+            arg_type = Int
+            range_tester = n -> n > 0
         "--case"
             help = "Companion case for Jutul reports, or original .DATA deck for Eclipse wells or geometry"
         "--static"
@@ -86,7 +98,12 @@ function plot_options(args; web)
     static = args[:static]
     reservoir_options = static || (!web && any(k -> !isnothing(args[k]), (:field, :step, :row)))
     curve_options = !web && any(k -> !isnothing(args[k]), (:entity, :series))
-    if reservoir_options && (view in (:summary, :wells) || curve_options)
+    summary_options = has_summary_options(args)
+    if summary_options && view in (:reservoir, :wells)
+        throw(ArgumentError("--plots, --rows, and --columns apply to summary plots."))
+    elseif !isempty(args[:plots]) && curve_options
+        throw(ArgumentError("Specify the initial summary panels with --plots or use --entity and --series for a single panel."))
+    elseif reservoir_options && (view in (:summary, :wells) || curve_options || (summary_options && !web))
         throw(ArgumentError("--static, --field, --step, and --row apply to reservoir plots."))
     elseif curve_options && view == :reservoir
         throw(ArgumentError("--entity and --series apply to summary and well plots."))
@@ -100,16 +117,22 @@ function plot_options(args; web)
         end
     end
     if view == :auto
-        view = if reservoir_options && (!web || isfile(args[:input]))
+        inferred = default_view(args[:input])
+        view = if summary_options && (!web || inferred != :auto)
+            static && throw(ArgumentError("Use --plot combined to set summary panels and show a static reservoir."))
+            :summary
+        elseif reservoir_options && (!web || isfile(args[:input]))
             :reservoir
         elseif curve_options
             :summary
         else
-            default_view(args[:input])
+            inferred
         end
     end
     return (; view, static, backend)
 end
+
+has_summary_options(args) = !isempty(args[:plots]) || !isnothing(args[:rows]) || !isnothing(args[:columns])
 
 function run_cli(argv; web)
     args = parse_commandline(argv; web)
@@ -124,7 +147,7 @@ function run_cli(argv; web)
                 import WGLMakie, Bonito
                 WGLMakie, Bonito
             end
-            Base.invokelatest(serve_web, name, results, view; host = args[:host], port = args[:port],
+            Base.invokelatest(serve_web, name, results, view, args; host = args[:host], port = args[:port],
                 backend = renderer, bonito)
         else
             renderer, interactive = select_backend(backend)

@@ -7,9 +7,12 @@ function render_plot(backend, name, results, view, args; interactive, visible = 
         isnothing(results.reservoir) && throw(ArgumentError("No reservoir geometry found for $name."))
         reservoir_figure(results.reservoir, name; interactive, field = args[:field],
             step = something(args[:step], 1), row = something(args[:row], 1))
+    elseif view == :summary
+        layout = summary_layout(summary_sources(results.summary), args)
+        summary_figure(results.summary, name, layout; interactive)
     else
-        entities = curve_catalog(results.summary, view)
-        curve_figure(results.summary, entities, name, view; interactive, entity = args[:entity], series = args[:series])
+        well_figure(results.summary, well_catalog(results.summary), name;
+            interactive, entity = args[:entity], series = args[:series])
     end
     if interactive
         return display(backend.Screen(; title = "jdplot · $name", visible), fig)
