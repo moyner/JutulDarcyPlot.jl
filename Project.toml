@@ -1,0 +1,35 @@
+name = "JutulDarcyPlot"
+uuid = "9cfb866d-b832-4be7-b8d9-650f36c107a9"
+version = "0.1.0"
+
+[deps]
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
+Bonito = "824d6782-a2ef-11e9-3a09-e5662e0c26f8"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+GeoEnergyIO = "3b1dd628-313a-45bb-9d8d-8f3c48dcb5d4"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"
+JutulDarcy = "82210473-ab04-4dce-b31b-11573c4f8e0a"
+Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
+WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
+
+[compat]
+ArgParse = "1.2"
+Bonito = "4.2, 5"
+CairoMakie = "0.15.14"
+Dates = "1"
+GLMakie = "0.13.14"
+GeoEnergyIO = "1.2.4"
+JLD2 = "0.5, 0.6"
+Jutul = "0.5.5"
+JutulDarcy = "0.4"
+Makie = "0.24.14"
+WGLMakie = "0.13.14"
+julia = "1.12"
+
+[apps.jdplot]
+
+[apps.jdplot-web]
+submodule = "Web"
