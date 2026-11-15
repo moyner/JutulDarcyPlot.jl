@@ -10,7 +10,7 @@ From a local checkout, install both launchers with Julia's app manager.
 julia -e 'using Pkg; Pkg.Apps.develop(path=ARGS[1])' /path/to/JutulDarcyPlot.jl
 ```
 
-Add the `bin` subdirectory of your first Julia depot to `PATH`. With the default depot, this is `~/.julia/bin` on Linux and macOS or `%USERPROFILE%\.julia\bin` on Windows. To run directly from the checkout, run `julia --project=. -e 'using Pkg; Pkg.instantiate()'` once, then use `julia --project=. -m JutulDarcyPlot` or `julia --project=. -m JutulDarcyPlot.Web` followed by the same arguments.
+Add the `bin` subdirectory of your first Julia depot to `PATH`. With the default depot, this is `~/.julia/bin` on Linux and macOS or `%USERPROFILE%\.julia\bin` on Windows. To run directly from the checkout, run `julia --project=. -e 'using Pkg; Pkg.instantiate()'` once. Then use `julia --project=. --compiled-modules=existing -O0 -m JutulDarcyPlot` for the desktop or `julia --project=. -m JutulDarcyPlot.Web` for the browser, followed by the same arguments.
 
 ## Plot from the terminal
 
@@ -67,4 +67,4 @@ The current `jdrun` exporter writes the well summary curves and reservoir soluti
 
 ## Precompilation
 
-Installation precompiles the Eclipse unified and split readers, native Jutul reports, and summary, well, static reservoir, and dynamic reservoir figures for CairoMakie, GLMakie, and WGLMakie/Bonito. `jdplot` loads the selected backend before loading the simulation and plotting code so Makie can reuse its compiled methods. The GL workload exercises the launcher's window setup and first frame offscreen when an OpenGL context is available. The web workload includes the combined layout and does not start a server or open a browser.
+Installation precompiles the Eclipse unified and split readers, native Jutul reports, and summary, well, static reservoir, and dynamic reservoir figures for CairoMakie, GLMakie, and WGLMakie/Bonito. The GL workload exercises the launcher's window setup and first frame offscreen when an OpenGL context is available. The desktop launcher reuses installed package caches and uses `-O0` for Julia methods compiled during the session to reduce time to the first plot. Run the install command again to refresh a previously generated launcher. The web workload includes the combined layout and does not start a server or open a browser.

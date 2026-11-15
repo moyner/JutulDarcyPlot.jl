@@ -1,19 +1,17 @@
 module JutulDarcyPlotWGLMakieExt
 
 import WGLMakie
-import Bonito
-
-include("../src/runtime.jl")
-include("../src/web.jl")
+import Bonito, JutulDarcyPlot, Makie
+using PrecompileTools: @setup_workload, @compile_workload
 
 @setup_workload begin
-    examples = plot_workload_data()
+    examples = JutulDarcyPlot.plot_workload_data()
     @compile_workload begin
         WGLMakie.activate!()
         try
             for (; data, static) in examples
                 for (results, view) in ((data, :auto), (data, :combined), (static, :reservoir))
-                    app = web_app("Example", results, view; bonito = Bonito, backend = WGLMakie)
+                    app = JutulDarcyPlot.web_app("Example", results, view; bonito = Bonito, backend = WGLMakie)
                     session = Bonito.Session(Bonito.NoConnection(); asset_server = Bonito.NoServer())
                     try
                         show(IOBuffer(), Bonito.session_dom(session, app))

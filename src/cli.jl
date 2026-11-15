@@ -67,13 +67,13 @@ function select_backend(name)
             import CairoMakie
             CairoMakie
         end
-        return renderer, false, :JutulDarcyPlotCairoMakieExt
+        return renderer, false
     elseif backend in ("gl", "glmakie")
         renderer = @eval begin
             import GLMakie
             GLMakie
         end
-        return renderer, true, :JutulDarcyPlotGLMakieExt
+        return renderer, true
     end
     throw(ArgumentError("Unknown backend $name. Use cairo or gl."))
 end
@@ -117,30 +117,18 @@ function run_cli(argv; web)
     try
         (; view, static, backend) = plot_options(args; web)
         source = resolve_input(args[:input]; companion = args[:case])
+        results = load_results(source, view; web, static)
         name = case_name(source)
         if web
             renderer, bonito = @eval begin
                 import WGLMakie, Bonito
                 WGLMakie, Bonito
             end
-            extension = :JutulDarcyPlotWGLMakieExt
+            Base.invokelatest(serve_web, name, results, view; host = args[:host], port = args[:port],
+                backend = renderer, bonito)
         else
-            renderer, interactive, extension = select_backend(backend)
-        end
-        # Load the selected backend first so Jutul's plotting extensions see it
-        # when they load. Importing GLMakie later invalidates compiled Makie code.
-        @eval import JutulDarcy
-        runtime = Base.get_extension(@__MODULE__, extension)
-        results = Base.invokelatest() do
-            runtime.load_results(source, view; web, static)
-        end
-        Base.invokelatest() do
-            if web
-                runtime.serve_web(name, results, view; host = args[:host], port = args[:port],
-                    backend = renderer, bonito)
-            else
-                runtime.present_plot(renderer, name, results, view, args; interactive)
-            end
+            renderer, interactive = select_backend(backend)
+            Base.invokelatest(present_plot, renderer, name, results, view, args; interactive)
         end
     catch err
         if err isa ArgumentError && !args[:verbose]
