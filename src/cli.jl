@@ -12,9 +12,9 @@ function parse_commandline(argv; web)
             help = "Eclipse case prefix, file or directory, Jutul .jld2 results, or a .jl/.AFI case"
             required = true
         "--plot"
-            help = web ? "View to serve (auto, summary, wells, reservoir, combined). Combined puts the summary and reservoir side by side." :
+            help = web ? "View to serve (combined by default, auto, summary, wells, reservoir). Auto follows the file type." :
                 "View to plot (auto, summary, wells, reservoir). Auto follows the file type."
-            default = "auto"
+            default = web ? "combined" : "auto"
         "--plots", "--summary-plot"
             help = "Initial summary panel, for example FPR, FOPR,FWPR or PROD:WBHP. Repeat for more panels."
             arg_type = String

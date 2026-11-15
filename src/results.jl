@@ -1,14 +1,15 @@
 function load_results(source::EclipseSource, view; web, static)
-    use_curves = view in (:summary, :wells, :combined) || (view == :auto && source.has_summary)
+    use_curves = view in (:summary, :wells) || (view in (:auto, :combined) && source.has_summary)
     has_grid = !isnothing(source.grid) || !isnothing(source.deck)
-    use_grid = view in (:reservoir, :combined) || (view == :auto && (web || !use_curves) && has_grid)
+    use_grid = view == :reservoir || (view in (:auto, :combined) && (web || !use_curves) && has_grid)
 
     summary = if use_curves
         source.has_summary || throw(ArgumentError("No complete Eclipse summary found for $(source.base). Supply SMSPEC and UNSMRY or Snnnn files."))
         GeoEnergyIO.read_summary(source.base; format = :structured)
     end
     reservoir = use_grid ? load_eclipse_reservoir(source; static) : nothing
-    return (; summary, reservoir)
+    wells = web || view == :wells ? eclipse_well_results(summary) : nothing
+    return (; summary, reservoir, wells)
 end
 
 const DECK_PROPERTIES = ("PORO", "PERMX", "PERMY", "PERMZ", "NTG", "SATNUM", "PVTNUM", "ROCKNUM", "FIPNUM")
@@ -176,8 +177,8 @@ reservoir_state(state) = get(state, :Reservoir, state)
 function load_native_results(source, case, result, view; web, static)
     has_results = !isempty(source.reports) || !isnothing(result)
     has_curves = has_results && (!isnothing(case) || result isa JutulDarcy.ReservoirSimResult)
-    use_curves = view in (:summary, :wells, :combined) || (view == :auto && has_curves)
-    use_grid = view in (:reservoir, :combined) || (view == :auto && (web || !use_curves) && !isnothing(case))
+    use_curves = view in (:summary, :wells) || (view in (:auto, :combined) && has_curves)
+    use_grid = view == :reservoir || (view in (:auto, :combined) && (web || !use_curves) && !isnothing(case))
     if (use_grid || (use_curves && has_results && !has_curves) || (!use_grid && !use_curves)) && isnothing(case)
         throw(ArgumentError("Native report files need --case CASE.jl, CASE.DATA, CASE.AFI, or a JLD2 file containing a JutulCase."))
     end
@@ -185,8 +186,10 @@ function load_native_results(source, case, result, view; web, static)
     states = missing
     steps = Int[]
     summary = nothing
+    wells = nothing
     if result isa JutulDarcy.ReservoirSimResult
         summary = use_curves ? result.summary : nothing
+        wells = use_curves ? result.wells : nothing
         if use_grid && !static
             states = result.states
             steps = collect(eachindex(states))
@@ -215,7 +218,8 @@ function load_native_results(source, case, result, view; web, static)
                 sim = Jutul.SimResult(raw_states, reports, now())
                 output = JutulDarcy.ReservoirSimResult(case.model, sim, case.forces; start_date = case.start_date)
                 summary = JutulDarcy.summary_result(case, output, :si; start_date = case.start_date)
-            elseif view == :auto
+                wells = output.wells
+            elseif view in (:auto, :combined)
                 use_grid = true
             else
                 throw(ArgumentError(problem))
@@ -228,5 +232,5 @@ function load_native_results(source, case, result, view; web, static)
     isempty_states = ismissing(states) || isempty(states)
     reservoir = use_grid ? (model = case.model, states = isempty_states ? missing : states,
         steps = isempty_states ? Int[] : steps, wells = missing) : nothing
-    return (; summary, reservoir)
+    return (; summary, reservoir, wells)
 end

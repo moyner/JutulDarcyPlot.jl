@@ -2,6 +2,7 @@ const ECLIPSE_EXTENSIONS = (".DATA", ".GRDECL", ".EGRID", ".INIT", ".UNRST", ".R
 const NATIVE_REPORT = r"^jutul_([1-9][0-9]*)\.jld2$"
 
 is_eclipse_extension(ext) = uppercase(ext) in ECLIPSE_EXTENSIONS || occursin(r"^\.[XS][0-9]+$"i, ext)
+is_eclipse_directory_candidate(ext) = is_eclipse_extension(ext) && !(uppercase(ext) in (".INIT", ".RSSPEC"))
 
 function default_view(input)
     isfile(input) || return :auto
@@ -93,8 +94,7 @@ function directory_input(directory; companion)
     for file in readdir(directory; join = true)
         isfile(file) || continue
         stem, ext = splitext(file)
-        if uppercase(ext) in (".DATA", ".GRDECL", ".EGRID", ".SMSPEC", ".UNSMRY", ".UNRST") ||
-                occursin(r"^\.[XS][0-9]+$"i, ext)
+        if is_eclipse_directory_candidate(ext)
             push!(candidates, stem)
         elseif lowercase(ext) == ".jld2" && isnothing(match(NATIVE_REPORT, basename(file)))
             push!(candidates, file)

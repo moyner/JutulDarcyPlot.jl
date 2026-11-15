@@ -9,7 +9,7 @@ using PrecompileTools: @setup_workload, @compile_workload
     @compile_workload begin
         try
             for (; data, static) in examples
-                curves = (summary = data.summary, reservoir = nothing)
+                curves = (summary = data.summary, reservoir = nothing, wells = data.wells)
                 grid = (summary = nothing, reservoir = data.reservoir)
                 for (results, view) in ((curves, :summary), (curves, :wells), (grid, :reservoir), (static, :reservoir))
                     screen = JutulDarcyPlot.render_plot(GLMakie, "Example", results, view, args;

@@ -61,7 +61,7 @@ function precompile_plot_figures(render, examples; interactive)
     for (; data, static) in examples
         layout = summary_layout(summary_sources(data.summary), args)
         render(summary_figure(data.summary, "Example", layout; interactive))
-        render(well_figure(data.summary, well_catalog(data.summary), "Example"; interactive))
+        render(well_figure(data.wells, data.summary, "Example"))
         render(reservoir_figure(data.reservoir, "Example"; interactive, step = 2))
         render(reservoir_figure(static.reservoir, "Example"; interactive))
     end

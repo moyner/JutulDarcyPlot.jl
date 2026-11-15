@@ -11,8 +11,7 @@ function render_plot(backend, name, results, view, args; interactive, visible = 
         layout = summary_layout(summary_sources(results.summary), args)
         summary_figure(results.summary, name, layout; interactive)
     else
-        well_figure(results.summary, well_catalog(results.summary), name;
-            interactive, entity = args[:entity], series = args[:series])
+        well_figure(results.wells, results.summary, name; entity = args[:entity], series = args[:series])
     end
     if interactive
         return display(backend.Screen(; title = "jdplot · $name", visible), fig)
