@@ -12,13 +12,13 @@ function parse_commandline(argv; web)
             help = "Eclipse case prefix, file or directory, Jutul .jld2 results, or a .jl/.AFI case"
             required = true
         "--plot"
-            help = web ? "View to serve (auto, summary, wells, reservoir). Auto serves all available views." :
-                "View to plot (auto, summary, wells, reservoir). Auto uses summary when available."
+            help = web ? "View to serve (auto, summary, wells, reservoir, combined). Combined puts the summary and reservoir side by side." :
+                "View to plot (auto, summary, wells, reservoir). Auto follows the file type."
             default = "auto"
         "--case"
-            help = "Companion Jutul case for native reports (.jl, .DATA, .AFI, or .jld2)"
+            help = "Companion case for Jutul reports, or original .DATA deck for Eclipse wells or geometry"
         "--static"
-            help = "Plot reservoir grid properties without loading dynamic states"
+            help = "Plot reservoir grid properties without showing dynamic cell results"
             action = :store_true
         "--verbose"
             help = "Show Julia stack traces for invalid input"
@@ -38,10 +38,9 @@ function parse_commandline(argv; web)
     else
         @add_arg_table! settings begin
             "--backend"
-                help = "Rendering backend (cairo or gl)"
-                default = "cairo"
+                help = "Rendering backend (gl by default, cairo for PNG export)"
             "--output", "-o"
-                help = "Output PNG path (defaults to <case>-<plot>.png in the current directory)"
+                help = "Export to this PNG path (implies cairo unless a backend is given)"
             "--entity"
                 help = "Field, well, group, or other summary entity to show initially"
             "--series"
@@ -68,79 +67,80 @@ function select_backend(name)
             import CairoMakie
             CairoMakie
         end
-        return renderer, false
+        return renderer, false, :JutulDarcyPlotCairoMakieExt
     elseif backend in ("gl", "glmakie")
         renderer = @eval begin
             import GLMakie
             GLMakie
         end
-        return renderer, true
+        return renderer, true, :JutulDarcyPlotGLMakieExt
     end
     throw(ArgumentError("Unknown backend $name. Use cairo or gl."))
 end
 
-function present_plot(backend, name, results, view, args; interactive)
-    backend.activate!()
+function plot_options(args; web)
+    view = Symbol(lowercase(args[:plot]))
+    view == :plot_reservoir && (view = :reservoir)
+    valid_views = web ? (:auto, :summary, :wells, :reservoir, :combined) : (:auto, :summary, :wells, :reservoir)
+    view in valid_views || throw(ArgumentError("Unknown plot $(args[:plot]). Use $(join(valid_views, ", "))."))
+    static = args[:static]
+    reservoir_options = static || (!web && any(k -> !isnothing(args[k]), (:field, :step, :row)))
+    curve_options = !web && any(k -> !isnothing(args[k]), (:entity, :series))
+    if reservoir_options && (view in (:summary, :wells) || curve_options)
+        throw(ArgumentError("--static, --field, --step, and --row apply to reservoir plots."))
+    elseif curve_options && view == :reservoir
+        throw(ArgumentError("--entity and --series apply to summary and well plots."))
+    end
+    backend = nothing
+    if !web
+        png = any(k -> !isnothing(args[k]), (:output, :row))
+        backend = something(args[:backend], png ? "cairo" : "gl")
+        if png && lowercase(backend) in ("gl", "glmakie")
+            throw(ArgumentError("--output and --row require the Cairo backend."))
+        end
+    end
     if view == :auto
-        view = isnothing(results.summary) ? :reservoir : :summary
+        view = if reservoir_options && (!web || isfile(args[:input]))
+            :reservoir
+        elseif curve_options
+            :summary
+        else
+            default_view(args[:input])
+        end
     end
-    fig = if view == :reservoir
-        isnothing(results.reservoir) && throw(ArgumentError("No reservoir geometry found for $name."))
-        reservoir_figure(results.reservoir, name; interactive, field = args[:field],
-            step = something(args[:step], 1), row = something(args[:row], 1))
-    else
-        entities = curve_catalog(results.summary, view)
-        curve_figure(results.summary, entities, name, view; interactive, entity = args[:entity], series = args[:series])
-    end
-    if interactive
-        screen = display(backend.Screen(; title = "jdplot · $name"), fig)
-        wait(screen)
-    else
-        path = abspath(something(args[:output], "$name-$view.png"))
-        lowercase(splitext(path)[2]) == ".png" || throw(ArgumentError("Cairo output must have a .png extension."))
-        mkpath(dirname(path))
-        Makie.save(path, fig; backend)
-        println("Wrote $path")
-    end
-    return nothing
+    return (; view, static, backend)
 end
 
 function run_cli(argv; web)
     args = parse_commandline(argv; web)
     command = web ? "jdplot-web" : "jdplot"
     try
-        view = Symbol(lowercase(args[:plot]))
-        view == :plot_reservoir && (view = :reservoir)
-        view in (:auto, :summary, :wells, :reservoir) ||
-            throw(ArgumentError("Unknown plot $(args[:plot]). Use auto, summary, wells, or reservoir."))
-        static = args[:static]
-        if web
-            static && view in (:summary, :wells) && throw(ArgumentError("--static applies to reservoir plots."))
-        else
-            reservoir_options = static || any(k -> !isnothing(args[k]), (:field, :step, :row))
-            curve_options = any(k -> !isnothing(args[k]), (:entity, :series))
-            if reservoir_options && (view in (:summary, :wells) || curve_options)
-                throw(ArgumentError("--static, --field, --step, and --row apply to reservoir plots."))
-            elseif curve_options && view == :reservoir
-                throw(ArgumentError("--entity and --series apply to summary and well plots."))
-            end
-            if view == :auto
-                reservoir_options && (view = :reservoir)
-                curve_options && (view = :summary)
-            end
-            if lowercase(args[:backend]) in ("gl", "glmakie") && any(k -> !isnothing(args[k]), (:output, :row))
-                throw(ArgumentError("--output and --row require the Cairo backend."))
-            end
-        end
+        (; view, static, backend) = plot_options(args; web)
         source = resolve_input(args[:input]; companion = args[:case])
-        results = load_results(source, view; web, static)
         name = case_name(source)
         if web
-            @eval import Bonito, WGLMakie
-            Base.invokelatest(serve_web, name, results, view; host = args[:host], port = args[:port])
+            renderer, bonito = @eval begin
+                import WGLMakie, Bonito
+                WGLMakie, Bonito
+            end
+            extension = :JutulDarcyPlotWGLMakieExt
         else
-            backend, interactive = select_backend(args[:backend])
-            Base.invokelatest(present_plot, backend, name, results, view, args; interactive)
+            renderer, interactive, extension = select_backend(backend)
+        end
+        # Load the selected backend first so Jutul's plotting extensions see it
+        # when they load. Importing GLMakie later invalidates compiled Makie code.
+        @eval import JutulDarcy
+        runtime = Base.get_extension(@__MODULE__, extension)
+        results = Base.invokelatest() do
+            runtime.load_results(source, view; web, static)
+        end
+        Base.invokelatest() do
+            if web
+                runtime.serve_web(name, results, view; host = args[:host], port = args[:port],
+                    backend = renderer, bonito)
+            else
+                runtime.present_plot(renderer, name, results, view, args; interactive)
+            end
         end
     catch err
         if err isa ArgumentError && !args[:verbose]

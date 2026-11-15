@@ -1,7 +1,7 @@
 function load_results(source::EclipseSource, view; web, static)
-    use_curves = view in (:summary, :wells) || (view == :auto && source.has_summary)
+    use_curves = view in (:summary, :wells, :combined) || (view == :auto && source.has_summary)
     has_grid = !isnothing(source.grid) || !isnothing(source.deck)
-    use_grid = view == :reservoir || (view == :auto && (web || !use_curves) && has_grid)
+    use_grid = view in (:reservoir, :combined) || (view == :auto && (web || !use_curves) && has_grid)
 
     summary = if use_curves
         source.has_summary || throw(ArgumentError("No complete Eclipse summary found for $(source.base). Supply SMSPEC and UNSMRY or Snnnn files."))
@@ -19,7 +19,7 @@ const ECLIPSE_METADATA = Set([
     "TAB", "TABDIMS", "NNCHEAD", "TRANNNC", "LGR", "LGRHEADI", "LGRHEADQ", "LGRHEADD",
 ])
 
-function eclipse_cell_fields(data, cells, active_cells, active_positions, nfull)
+function eclipse_cell_fields(data, cells, nactive, active_positions, nfull, full_ordered, active_ordered)
     header = get(data, "INTEHEAD", Int[])
     unit_system = get(header, 3, 0)
     fields = Dict{Symbol, Any}()
@@ -28,9 +28,9 @@ function eclipse_cell_fields(data, cells, active_cells, active_positions, nfull)
         values isa AbstractArray{<:Real} && !(values isa AbstractArray{Bool}) || continue
         label = Symbol(eclipse_field_label(key, unit_system))
         if length(values) == nfull
-            fields[label] = length(cells) == nfull && issorted(cells) ? vec(values) : vec(values)[cells]
-        elseif length(values) == length(active_cells) && !isnothing(active_positions)
-            fields[label] = cells == active_cells ? vec(values) : vec(values)[active_positions]
+            fields[label] = full_ordered ? vec(values) : vec(values)[cells]
+        elseif length(values) == nactive && !isnothing(active_positions)
+            fields[label] = active_ordered ? vec(values) : vec(values)[active_positions]
         elseif length(values) == length(cells)
             fields[label] = vec(values)
         end
@@ -53,6 +53,8 @@ function eclipse_field_label(key, unit_system)
 end
 
 function load_eclipse_reservoir(source; static)
+    deck = nothing
+    has_deck = !isnothing(source.deck) && uppercase(splitext(source.deck)[2]) == ".DATA"
     if !isnothing(source.grid)
         grid = GeoEnergyIO.read_egrid(source.grid)
         from_binary = true
@@ -60,7 +62,8 @@ function load_eclipse_reservoir(source; static)
         if lowercase(splitext(source.deck)[2]) == ".grdecl"
             grid = GeoEnergyIO.parse_grdecl_file(source.deck; verbose = false)
         else
-            grid = GeoEnergyIO.parse_data_file(source.deck; verbose = false)["GRID"]
+            deck = GeoEnergyIO.parse_data_file(source.deck; verbose = false)
+            grid = deck["GRID"]
         end
         from_binary = false
     else
@@ -74,7 +77,10 @@ function load_eclipse_reservoir(source; static)
     positions[active_cells] .= eachindex(active_cells)
     mesh_positions = positions[mesh.cell_map]
     active_positions = all(>(0), mesh_positions) ? mesh_positions : nothing
-    cell_fields(data) = eclipse_cell_fields(data, mesh.cell_map, active_cells, active_positions, length(active))
+    full_ordered = length(mesh.cell_map) == length(active) && issorted(mesh.cell_map)
+    active_ordered = mesh.cell_map == active_cells
+    cell_fields(data) = eclipse_cell_fields(data, mesh.cell_map, length(active_cells), active_positions,
+        length(active), full_ordered, active_ordered)
     domain = Jutul.DataDomain(mesh)
     properties = Dict{String, Any}(k => grid[k] for k in DECK_PROPERTIES if haskey(grid, k))
     if !isnothing(source.init)
@@ -86,15 +92,60 @@ function load_eclipse_reservoir(source; static)
 
     steps = Int[]
     states = missing
-    if !static && !isnothing(source.restart)
+    logical_cells = LinearIndices(Tuple(grid["cartDims"]))
+    cell_map = zeros(Int, length(logical_cells))
+    cell_map[mesh.cell_map] .= eachindex(mesh.cell_map)
+    completions = Dict{String, Vector{Int}}()
+    if static && has_deck
+        isnothing(deck) && (deck = GeoEnergyIO.parse_data_file(source.deck; verbose = false))
+        add_deck_completions!(completions, deck, logical_cells, cell_map)
+    end
+    if !isnothing(source.restart) && (!static || isempty(completions))
         restart = GeoEnergyIO.read_restart(source.restart)
-        fields = cell_fields.(restart)
-        if !isempty(fields) && any(!isempty, fields)
-            states = fields
-            steps = [step["report_step"] for step in restart]
+        for report in restart
+            add_restart_completions!(completions, report, logical_cells, cell_map)
+        end
+        if !static
+            fields = cell_fields.(restart)
+            if !isempty(fields) && any(!isempty, fields)
+                states = fields
+                steps = [step["report_step"] for step in restart]
+            end
         end
     end
-    return (model = domain, states = states, steps = steps)
+    if !static && isempty(completions) && has_deck
+        isnothing(deck) && (deck = GeoEnergyIO.parse_data_file(source.deck; verbose = false))
+        add_deck_completions!(completions, deck, logical_cells, cell_map)
+    end
+    wells = [JutulDarcy.SimpleWell(unique(cells); name = Symbol(name)) for (name, cells) in sort!(collect(completions); by = first)]
+    return (model = domain, states = states, steps = steps, wells = wells)
+end
+
+function load_case(path)
+    path = abspath(path)
+    isfile(path) || throw(ArgumentError("Case file does not exist: $path"))
+    ext = lowercase(splitext(path)[2])
+    if ext == ".jl"
+        # Use a fresh module so an unrelated global named `case` cannot be reused.
+        scope = Module(gensym(:JDPlotCase))
+        Core.eval(scope, :(const include = Base.Fix1(Base.include, $scope)))
+        Base.include(scope, path)
+        case = Base.invokelatest() do
+            isdefined(scope, :case) ? getfield(scope, :case) : nothing
+        end
+    elseif ext == ".data"
+        case = JutulDarcy.setup_case_from_data_file(path; verbose = false, parse_arg = (; verbose = false))
+    elseif ext == ".afi"
+        case = JutulDarcy.setup_case_from_afi(path; verbose = false)
+    elseif ext == ".jld2"
+        case = JLD2.jldopen(path, "r") do file
+            get(file, "case", nothing)
+        end
+    else
+        throw(ArgumentError("Expected a .jl, .DATA, .AFI, or .jld2 case file, got $path"))
+    end
+    case isa Jutul.JutulCase || throw(ArgumentError("$path must define or store a JutulCase named case"))
+    return case
 end
 
 function load_results(source::JutulSource, view; web, static)
@@ -125,8 +176,8 @@ reservoir_state(state) = get(state, :Reservoir, state)
 function load_native_results(source, case, result, view; web, static)
     has_results = !isempty(source.reports) || !isnothing(result)
     has_curves = has_results && (!isnothing(case) || result isa JutulDarcy.ReservoirSimResult)
-    use_curves = view in (:summary, :wells) || (view == :auto && has_curves)
-    use_grid = view == :reservoir || (view == :auto && (web || !use_curves) && !isnothing(case))
+    use_curves = view in (:summary, :wells, :combined) || (view == :auto && has_curves)
+    use_grid = view in (:reservoir, :combined) || (view == :auto && (web || !use_curves) && !isnothing(case))
     if (use_grid || (use_curves && has_results && !has_curves) || (!use_grid && !use_curves)) && isnothing(case)
         throw(ArgumentError("Native report files need --case CASE.jl, CASE.DATA, CASE.AFI, or a JLD2 file containing a JutulCase."))
     end
@@ -176,6 +227,6 @@ function load_native_results(source, case, result, view; web, static)
     end
     isempty_states = ismissing(states) || isempty(states)
     reservoir = use_grid ? (model = case.model, states = isempty_states ? missing : states,
-        steps = isempty_states ? Int[] : steps) : nothing
+        steps = isempty_states ? Int[] : steps, wells = missing) : nothing
     return (; summary, reservoir)
 end

@@ -3,6 +3,17 @@ const NATIVE_REPORT = r"^jutul_([1-9][0-9]*)\.jld2$"
 
 is_eclipse_extension(ext) = uppercase(ext) in ECLIPSE_EXTENSIONS || occursin(r"^\.[XS][0-9]+$"i, ext)
 
+function default_view(input)
+    isfile(input) || return :auto
+    ext = uppercase(splitext(input)[2])
+    if ext in (".SMSPEC", ".UNSMRY") || occursin(r"^\.S[0-9]+$", ext)
+        return :summary
+    elseif is_eclipse_extension(ext) || ext in (".AFI", ".JL") || occursin(NATIVE_REPORT, basename(input))
+        return :reservoir
+    end
+    return :auto
+end
+
 struct EclipseSource
     base::String
     deck::Union{String, Nothing}
@@ -32,7 +43,7 @@ function native_reports(directory)
     return sort!(steps)
 end
 
-function eclipse_source(path)
+function eclipse_source(path; companion)
     stem, ext = splitext(path)
     base = is_eclipse_extension(ext) ? stem : path
     directory, name = splitdir(base)
@@ -49,6 +60,11 @@ function eclipse_source(path)
         base = splitext(first(values(files)))[1]
     end
     deck = get(files, ".DATA", get(files, ".GRDECL", nothing))
+    if !isnothing(companion)
+        deck = abspath(companion)
+        uppercase(splitext(deck)[2]) == ".DATA" && isfile(deck) ||
+            throw(ArgumentError("--case for Eclipse inputs must point to an existing .DATA deck: $deck"))
+    end
     grid = get(files, ".EGRID", nothing)
     init = get(files, ".INIT", nothing)
     restart = get(files, ".UNRST", nothing)
@@ -107,34 +123,7 @@ function resolve_input(input; companion = nothing)
         end
         return JutulSource(path, companion, reports)
     end
-    isnothing(companion) || throw(ArgumentError("--case is for Jutul results. Point Eclipse inputs at their case prefix or one of the case files."))
     is_eclipse_extension(ext) && !isfile(path) && throw(ArgumentError("Input file does not exist: $path"))
-    return eclipse_source(path)
+    return eclipse_source(path; companion)
 end
 
-function load_case(path)
-    path = abspath(path)
-    isfile(path) || throw(ArgumentError("Case file does not exist: $path"))
-    ext = lowercase(splitext(path)[2])
-    if ext == ".jl"
-        # Use a fresh module so an unrelated global named `case` cannot be reused.
-        scope = Module(gensym(:JDPlotCase))
-        Core.eval(scope, :(const include = Base.Fix1(Base.include, $scope)))
-        Base.include(scope, path)
-        case = Base.invokelatest() do
-            isdefined(scope, :case) ? getfield(scope, :case) : nothing
-        end
-    elseif ext == ".data"
-        case = JutulDarcy.setup_case_from_data_file(path; verbose = false, parse_arg = (; verbose = false))
-    elseif ext == ".afi"
-        case = JutulDarcy.setup_case_from_afi(path; verbose = false)
-    elseif ext == ".jld2"
-        case = JLD2.jldopen(path, "r") do file
-            get(file, "case", nothing)
-        end
-    else
-        throw(ArgumentError("Expected a .jl, .DATA, .AFI, or .jld2 case file, got $path"))
-    end
-    case isa Jutul.JutulCase || throw(ArgumentError("$path must define or store a JutulCase named case"))
-    return case
-end

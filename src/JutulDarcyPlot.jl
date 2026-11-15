@@ -1,13 +1,8 @@
 module JutulDarcyPlot
 
 using ArgParse
-using Dates: now
-import GeoEnergyIO, JLD2, Jutul, JutulDarcy, Makie
 
 include("inputs.jl")
-include("results.jl")
-include("plots.jl")
-include("web.jl")
 include("cli.jl")
 
 function (@main)(args)
