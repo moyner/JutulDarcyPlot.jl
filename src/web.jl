@@ -7,9 +7,13 @@ const WORKSPACE_JS = read(WORKSPACE_ASSET, String)
 const CASE_BROWSER_JS = read(CASE_BROWSER_ASSET, String)
 include("web_case_browser.jl")
 include("web_statistics.jl")
+include("web_plot_options.jl")
+include("web_plot_state.jl")
+include("web_source_files.jl")
 
 const WEB_STYLE = """
     * { box-sizing: border-box; }
+    html { scrollbar-gutter: stable; }
     body { margin: 0; background: #edf2f6; color: #173044; font: 15px Inter, system-ui, sans-serif; }
     .jdplot { margin: auto; padding: 14px 16px 20px; color-scheme: light;
               --bonito-widget-bg: #fff; --bonito-widget-fg: #173044;
@@ -29,9 +33,6 @@ const WEB_STYLE = """
     .jdplot header :focus-visible { outline-color: #8fe8ee; }
     .jdplot header button, .jdplot header select { color: #173044; border-color: transparent; }
     .jdplot .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .jdplot .plot-controls { display: flex; gap: 0; }
-    .jdplot .plot-choice { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-    .jdplot .plot-controls .actions-add { border-top-left-radius: 0; border-bottom-left-radius: 0; }
     .jdplot .actions-add { color: #fff; background: #075968; border-color: #075968; }
     .jdplot .actions-add:hover { background: #034755; }
     .jdplot header .actions-add { color: #0c3541; background: #a4e2e1; border-color: #a4e2e1; }
@@ -61,8 +62,9 @@ const WEB_STYLE = """
                              background: linear-gradient(135deg, transparent 48%, #7897a8 49% 55%, #edf3f7 56%); }
     .jdplot .view-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
     .jdplot .plot-gallery .view-body { height: min(80vh, 800px); min-height: 520px; }
-    .jdplot .plot { height: 100%; overflow: auto; }
-    .jdplot .plot-frame { height: 100%; min-height: 490px; }
+    .jdplot .plot { height: 100%; min-height: 0; min-width: 0; overflow: auto; scrollbar-gutter: stable; }
+    /* Size the scroll area from the frame. WGL's canvas must not contribute to its overflow. */
+    .jdplot .plot-frame { width: 100%; height: 100%; min-height: 490px; contain: size; overflow: clip; }
     .jdplot .plot-stack { position: relative; flex: 1; min-height: 0; }
     .jdplot .plot-stack > .plot { position: absolute; inset: 0; }
     /* Retain a usable size for a WGLMakie canvas while its tab is hidden. */
@@ -95,6 +97,26 @@ const WEB_STYLE = """
     .jdplot .case-status { margin: 8px 0; overflow-wrap: anywhere; }
     .jdplot .case-status:empty { display: none; }
     .jdplot .dialog-actions { justify-content: flex-end; margin-top: 6px; }
+    .jdplot .workspace-message { padding: 8px 12px; margin: 0 0 10px; background: #fff5e1; border-radius: 6px; }
+    .jdplot .workspace-message:empty, .jdplot .plot-error:empty { display: none; }
+    .jdplot .plot-dialog { width: min(610px, calc(100% - 24px)); }
+    .jdplot .plot-kinds { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0; }
+    .jdplot .plot-kinds [aria-pressed="true"] { background: #dceef0; border-color: #58969f; }
+    .jdplot .plot-settings:not([hidden]) { display: grid; gap: 12px; margin-bottom: 14px; }
+    .jdplot .plot-field { display: grid; gap: 4px; min-width: 0; }
+    .jdplot .plot-field span { font-size: 13px; color: #496476; }
+    .jdplot .plot-field :is(input, select, textarea) { width: 100%; min-width: 0; padding: 7px 9px;
+        border: 1px solid #c8d5de; border-radius: 6px; }
+    .jdplot .plot-field textarea, .jdplot .source-editor { font: 14px "IBM Plex Mono", ui-monospace, Consolas, monospace; }
+    .jdplot .plot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; }
+    .jdplot .plot-check { display: flex; gap: 6px; align-items: start; font-size: 14px; }
+    .jdplot .plot-settings details { border-top: 1px solid #d9e4ec; padding-top: 8px; }
+    .jdplot .plot-settings details .plot-grid { margin-top: 8px; }
+    .jdplot .plot-error { color: #962c32; overflow-wrap: anywhere; }
+    .jdplot .source-dialog { width: min(960px, calc(100% - 24px)); }
+    .jdplot .source-path { font-size: 13px; color: #496476; overflow-wrap: anywhere; }
+    .jdplot .source-editor { width: 100%; min-height: min(62vh, 650px); resize: vertical; color: #173044;
+        background: #f8fafc; border: 1px solid #c8d5de; border-radius: 6px; padding: 10px; tab-size: 4; }
     .jdplot .stats-dialog { width: min(840px, calc(100% - 24px)); }
     .jdplot .stats-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
     .jdplot .stats-body { min-height: 0; overflow: auto; }
@@ -144,42 +166,53 @@ function web_case(name, results, requested, args)
     return (; name, results, available, views, layout)
 end
 
-function web_plot(DOM, backend, figure, view; min_width, hidden = false)
+function web_plot(DOM, backend, figure, view, mounts; min_width, hidden = false, camera_scene = nothing)
     plot = backend.WithConfig(figure; resize_to = :parent)
     frame = DOM.div(plot; class = "plot-frame", style = "min-width: $(min_width)px")
-    return DOM.div(frame; class = "plot", var"data-plot" = string(view), hidden)
+    node = DOM.div(frame; class = "plot", var"data-plot" = string(view), hidden)
+    push!(mounts, (node, figure, camera_scene))
+    return node
 end
 
-function web_view(data, view; backend, bonito)
+function web_view(data, view, mounts; backend, bonito, config = Dict{String, String}())
     DOM = bonito.DOM
-    (; results, layout, name) = data
+    (; results, name) = data
     if view == :summary
+        layout = web_summary_layout(data, config)
         summary = summary_figure(results.summary, name, layout; interactive = true)
-        plot = web_plot(DOM, backend, summary, :summary; min_width = max(820, 415 * layout.cols))
+        plot = web_plot(DOM, backend, summary, :summary, mounts; min_width = max(820, 415 * layout.cols))
         if :wells in data.available
             buttons = [DOM.button(VIEW_TITLES[v]; type = "button", var"data-tab" = string(v),
                 var"aria-pressed" = string(v == :summary)) for v in (:summary, :wells)]
             toggle = DOM.div(buttons...; class = "plot-switcher", role = "group", var"aria-label" = "Curve view")
             wells = well_figure(results.wells, results.summary, name)
-            stack = DOM.div(plot, web_plot(DOM, backend, wells, :wells; min_width = 880, hidden = true);
+            stack = DOM.div(plot, web_plot(DOM, backend, wells, :wells, mounts; min_width = 880, hidden = true);
                 class = "plot-stack")
             return DOM.div(toggle, stack; class = "view-body")
         end
     elseif view == :reservoir
-        figure = reservoir_figure(results.reservoir, name; interactive = true)
-        plot = web_plot(DOM, backend, figure, view; min_width = 960)
+        options = isempty(config) ? NamedTuple() : web_reservoir_options(config)
+        explorer = reservoir_figure(results.reservoir, name; interactive = true, return_explorer = true, options...)
+        plot = web_plot(DOM, backend, explorer.fig, view, mounts; min_width = 960, camera_scene = explorer.lscene.scene)
     else
-        figure = well_figure(results.wells, results.summary, name)
-        plot = web_plot(DOM, backend, figure, view; min_width = 880)
+        entity = get(config, "entity", "")
+        series = get(config, "series", "")
+        figure = well_figure(results.wells, results.summary, name;
+            entity = isempty(entity) ? nothing : entity, series = isempty(series) ? nothing : series)
+        plot = web_plot(DOM, backend, figure, view, mounts; min_width = 880)
     end
     return DOM.div(plot; class = "view-body")
 end
 
-function web_window(data, view; backend, bonito)
+function web_window(data, view; backend, bonito, id = "default-$view", config = Dict{String, String}())
     DOM = bonito.DOM
     title = VIEW_TITLES[view]
-    body = web_view(data, view; backend, bonito)
-    return bonito.App(; loading_page = nothing) do
+    mounts = []
+    body = web_view(data, view, mounts; backend, bonito, config)
+    return bonito.App(; loading_page = nothing) do session
+        for (node, figure, camera) in mounts
+            mount_plot_state(bonito, session, node, figure, camera)
+        end
         bar = DOM.div(DOM.div(DOM.h2(title); class = "window-title", tabindex = "0",
                 var"aria-label" = "Move $title window"),
             DOM.button("□"; class = "window-maximize", type = "button", title = "Maximize $title window",
@@ -188,46 +221,66 @@ function web_window(data, view; backend, bonito)
             class = "window-bar")
         resize = DOM.button(; class = "window-resize", type = "button", var"aria-label" = "Resize $title window")
         DOM.section(bar, body, resize; class = "plot-window",
-            var"data-view" = string(view), var"aria-label" = title)
+            var"data-view" = string(view), var"data-window-id" = id, var"aria-label" = title)
     end
 end
 
-function web_case_app(data, requested, switch_case, input; backend, bonito, allow_case_load)
+function web_case_app(data, requested, switch_case, input, companion, files; backend, bonito, allow_case_load)
     DOM = bonito.DOM
     combined = requested == :combined
     # Build the initial figures before installing a replacement case in the tab.
+    gallery_mounts = []
     plots = if combined
         DOM.div([web_window(data, view; backend, bonito) for view in data.views]...;
             class = "workspace-stage", var"aria-label" = "Plot workspace")
     else
         DOM.div([DOM.section(DOM.h2(VIEW_TITLES[view]),
-                web_view(data, view; backend, bonito); var"data-view" = string(view)) for view in data.views]...;
+                web_view(data, view, gallery_mounts; backend, bonito); var"data-view" = string(view),
+                var"data-window-id" = "default-$view") for view in data.views]...;
             class = "plot-gallery")
     end
     return bonito.App(; loading_page = nothing) do session
         actions = Makie.Observable(String[])
+        plot_status = Makie.Observable(String[])
+        source_text = Makie.Observable(String[])
+        for (node, figure, camera) in gallery_mounts
+            mount_plot_state(bonito, session, node, figure, camera)
+        end
         controls = []
         if combined
-            choices = [DOM.option(VIEW_TITLES[view]; value = string(view)) for view in data.available]
-            push!(controls, DOM.div(DOM.select(choices...; class = "plot-choice", var"aria-label" = "Plot type"),
-                DOM.button("Add plot"; class = "actions-add", type = "button"); class = "plot-controls"))
+            push!(controls, DOM.button("Add plot"; class = "actions-add plot-open", type = "button"))
         end
         push!(controls, DOM.button("Statistics"; class = "stats-open", type = "button"))
+        if !isempty(files)
+            push!(controls, DOM.button("Data files"; class = "source-open", type = "button"))
+            listen_for_source_file(bonito, session, actions, source_text, files)
+        end
         if allow_case_load
             push!(controls, DOM.button("Load case"; class = "case-open", type = "button"))
         end
         header = DOM.header(DOM.h1(data.name), DOM.div(controls...; class = "controls"))
         stats = web_statistics_dialog(bonito, session, data.results, actions)
         browser = allow_case_load ? web_case_dialog(DOM, input) : nothing
-        root = DOM.div(header, plots, stats, browser)
+        picker = combined ? plot_options_dialog(DOM, data) : nothing
+        source = isempty(files) ? nothing : web_source_dialog(DOM, files)
+        message = DOM.p(; class = "workspace-message", role = "status")
+        root = DOM.div(header, message, plots, picker, stats, browser, source;
+            var"data-input" = abspath(input), var"data-companion" = isnothing(companion) ? "" : abspath(companion))
         bonito.on(session, actions) do action
-            if combined && length(action) == 2 && first(action) == "add"
-                view = findfirst(v -> string(v) == action[2], data.available)
-                isnothing(view) && return
-                bonito.append_child(session, plots, web_window(data, data.available[view]; backend, bonito))
+            if combined && length(action) >= 3 && first(action) == "add"
+                id = action[2]
+                try
+                    index = findfirst(v -> string(v) == action[3], data.available)
+                    isnothing(index) && throw(ArgumentError("This plot type is unavailable for the case."))
+                    config = web_plot_settings(action[4:end])
+                    bonito.append_child(session, plots, web_window(data, data.available[index]; backend, bonito, id, config))
+                catch err
+                    err isa InterruptException && rethrow()
+                    plot_status[] = [id, sprint(showerror, err)]
+                end
             end
         end
-        bonito.onload(session, root, web_initializer(bonito, "root", WORKSPACE_JS, actions))
+        bonito.onload(session, root, web_initializer(bonito, "root", WORKSPACE_JS, actions, plot_status, source_text))
         if allow_case_load
             mount_case_browser!(bonito, session, browser, actions, switch_case)
         end
@@ -244,8 +297,9 @@ function web_initializer(bonito, node, javascript, observables...)
     return bonito.JSCode(code)
 end
 
-function web_app(name, results, requested, args; backend, bonito, allow_case_load = false)
+function web_app(name, results, requested, args; backend, bonito, allow_case_load = false, source = nothing)
     initial = web_case(name, results, requested, args)
+    initial_files = allow_case_load ? case_source_files(source) : String[]
     return bonito.App(; title = "jdplot · $name") do
         display = Makie.Observable{Any}(nothing)
         function switch_case(path, companion)
@@ -260,27 +314,28 @@ function web_app(name, results, requested, args; backend, bonito, allow_case_loa
             source = resolve_input(path; companion)
             data = load_results(source, view; web = true, static)
             next_case = Base.invokelatest(web_case, case_name(source), data, view, next_args)
-            display[] = Base.invokelatest(web_case_app, next_case, view, switch_case, path;
+            files = allow_case_load ? case_source_files(source) : String[]
+            display[] = Base.invokelatest(web_case_app, next_case, view, switch_case, path, companion, files;
                 backend, bonito, allow_case_load)
             return nothing
         end
-        display[] = web_case_app(initial, requested, switch_case, args[:input]; backend, bonito, allow_case_load)
-        return bonito.DOM.main(bonito.DOM.style(WEB_STYLE), display; class = "jdplot")
+        display[] = web_case_app(initial, requested, switch_case, args[:input], args[:case], initial_files;
+            backend, bonito, allow_case_load)
+        key = string(abspath(args[:input]), '\n', something(args[:case], ""), '\n', requested)
+        return bonito.DOM.main(bonito.DOM.style(WEB_STYLE), display; class = "jdplot", var"data-workspace" = key)
     end
 end
 
-function serve_web(name, results, view, args; host, port, backend, bonito)
+function serve_web(name, results, view, args; host, port, backend, bonito, source = nothing)
     backend.activate!()
     # Loading a path can execute a Julia case script. Restrict this action to a local server.
     allow_case_load = lowercase(host) in ("127.0.0.1", "::1", "localhost")
-    app = web_app(name, results, view, args; backend, bonito, allow_case_load)
+    app = web_app(name, results, view, args; backend, bonito, allow_case_load, source)
     server = bonito.Server(app, host, port)
-    println("jdplot-web is serving $name at $(bonito.online_url(server, "/"))")
-    flush(stdout)
     try
+        println("jdplot-web is serving $name at $(bonito.online_url(server, "/"))")
+        flush(stdout)
         wait(server)
-    catch err
-        err isa InterruptException || rethrow()
     finally
         close(server)
     end

@@ -130,6 +130,7 @@
         loading = false;
         message.textContent = error;
         controls();
+        dialog.parentElement.dispatchEvent(new CustomEvent("jdplot:case-error", {detail: error}));
     });
 
     open.addEventListener("click", () => {

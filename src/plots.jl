@@ -67,18 +67,22 @@ function explorer_states(states, nc)
     return [Dict(key => state[key] for key in shared) for state in states]
 end
 
-function reservoir_figure(reservoir, name; interactive, field = nothing, step = 1, row = 1)
+function reservoir_figure(reservoir, name; interactive, field = nothing, step = 1, row = 1,
+        return_explorer = false, static_only = false, plot_options = NamedTuple())
     (; model, states, steps, wells) = reservoir
     if !(1 <= step <= max(length(steps), 1))
         throw(ArgumentError("Step $step is out of range. Available plot steps: 1:$(length(steps))."))
     end
     domain = model isa Jutul.DataDomain ? model : JutulDarcy.reservoir_domain(model)
     nc = Jutul.number_of_cells(domain)
-    if interactive
+    if static_only
+        states = missing
+    elseif interactive
         states = explorer_states(states, nc)
     end
-    static = JutulDarcy.convert_for_plotting(domain)
-    snapshot = ismissing(states) ? Dict() : JutulDarcy.convert_for_plotting(states[step])
+    convert_data(x) = JutulDarcy.convert_for_plotting(x; units = get(plot_options, :unit_system, "metric"))
+    static = convert_data(domain)
+    snapshot = ismissing(states) ? Dict() : convert_data(states[step])
     properties = merge(static, snapshot)
     keys_to_plot = sort!(filter(collect(keys(properties))) do key
         values = properties[key]
@@ -87,6 +91,10 @@ function reservoir_figure(reservoir, name; interactive, field = nothing, step = 
     isempty(keys_to_plot) && throw(ArgumentError("The reservoir has no plottable cell properties."))
 
     field_label(k) = first(split(string(k), " / "; limit = 2))
+    component = interactive && !isnothing(field) ? match(r"^(.*) row ([1-9][0-9]*)$", field) : nothing
+    if !isnothing(component)
+        field, row = component.captures[1], parse(Int, component.captures[2])
+    end
     if isnothing(field)
         preferred = ismissing(states) ? ("poro", "porosity", "volumes") : ("pressure", "swat", "saturations")
         index = nothing
@@ -100,14 +108,15 @@ function reservoir_figure(reservoir, name; interactive, field = nothing, step = 
         isnothing(index) && throw(ArgumentError("Unknown cell property $field at step $step. Available: $(join(keys_to_plot, ", "))"))
         key = keys_to_plot[index]
     end
-    if interactive
-        explorer = JutulDarcy.plot_reservoir(model, states; step, key, title = name, wells)
-        return explorer.fig
-    end
-
     values = properties[key]
     nrows = values isa AbstractMatrix ? size(values, 1) : 1
     1 <= row <= nrows || throw(ArgumentError("Cell property $key has $nrows components. Requested row $row."))
+    if interactive
+        explorer_key = values isa AbstractMatrix ? "$key row $row" : key
+        explorer = JutulDarcy.plot_reservoir(model, states; step, key = explorer_key, title = name, wells, plot_options...)
+        return return_explorer ? explorer : explorer.fig
+    end
+
     fig = JutulDarcy.plot_reservoir(model, states; gui = false, fancy = false, key, step, row,
         resolution = (820, 500), colorbar = :vertical, wells)
     caption = String[name, string(key)]

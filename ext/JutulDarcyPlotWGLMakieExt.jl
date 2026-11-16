@@ -23,6 +23,13 @@ using PrecompileTools: @setup_workload, @compile_workload
                         if view == :combined
                             content = JutulDarcyPlot.statistics_content(Bonito, session, results)
                             show(IOBuffer(), Bonito.jsrender(session, content))
+                            workspace = JutulDarcyPlot.web_case("Example", results, view, args)
+                            summary_config = Dict("plots" => "FIELD:FPR", "rows" => "1", "cols" => "1")
+                            reservoir_config = Dict("colormap" => "plasma", "edges" => "true", "step" => "2")
+                            for (kind, config) in ((:summary, summary_config), (:reservoir, reservoir_config))
+                                plot = JutulDarcyPlot.web_window(workspace, kind; backend = WGLMakie, bonito = Bonito, config)
+                                show(IOBuffer(), Bonito.jsrender(session, plot))
+                            end
                         end
                         if hasproperty(session, :init_error) && !isnothing(session.init_error[])
                             throw(session.init_error[])

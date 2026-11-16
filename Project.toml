@@ -14,6 +14,7 @@ Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"
 JutulDarcy = "82210473-ab04-4dce-b31b-11573c4f8e0a"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
 
 [extensions]
@@ -33,6 +34,7 @@ Jutul = "0.5.5"
 JutulDarcy = "0.4"
 Makie = "0.24.14"
 PrecompileTools = "1"
+Statistics = "1"
 WGLMakie = "0.13.14"
 julia = "1.12"
 

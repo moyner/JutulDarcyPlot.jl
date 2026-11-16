@@ -148,7 +148,7 @@ function run_cli(argv; web)
                 WGLMakie, Bonito
             end
             Base.invokelatest(serve_web, name, results, view, args; host = args[:host], port = args[:port],
-                backend = renderer, bonito)
+                backend = renderer, bonito, source)
         else
             renderer, interactive = select_backend(backend)
             Base.invokelatest(present_plot, renderer, name, results, view, args; interactive)
